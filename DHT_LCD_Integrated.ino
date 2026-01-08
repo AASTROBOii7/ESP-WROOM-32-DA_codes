@@ -1,3 +1,6 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include "DHT.h"
 void setup() {
   Wire.begin(21, 22);   // SDA, SCL
   lcd.init();
