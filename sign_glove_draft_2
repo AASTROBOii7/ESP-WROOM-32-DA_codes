@@ -25,10 +25,9 @@ void setup() {
     while (1) { delay(10); }
   }
   
-  // Fixed library constants
   mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
   mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ); // Changed from FILTER to BAND
+  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ); 
 
   Serial.println("Glove & MPU6050 Ready! Pair with 'SignLanguageGlove'");
 }
@@ -38,7 +37,6 @@ void loop() {
   mpu.getEvent(&a, &g, &temp);
 
   // Read Flex Sensors
-  // Mapping based on your test values (adjust ranges if needed)
   int thumb  = map(analogRead(thumbPin), 400, 3000, 0, 100); 
   int index  = map(analogRead(indexPin), 2000, 3500, 0, 100);
   int middle = map(analogRead(middlePin), 2000, 3500, 0, 100);
@@ -52,7 +50,7 @@ void loop() {
   ring = constrain(ring, 0, 100);
   pinky = constrain(pinky, 0, 100);
 
-  // Threshold logic (True = Finger is Folded)
+  // Threshold logic
   bool fT = (thumb > 45); 
   bool fI = (index > 60);
   bool fM = (middle > 65);
@@ -60,3 +58,35 @@ void loop() {
   bool fP = (pinky > 55);
 
   // MPU6050 Orientation logic
+  bool palmForward = (a.acceleration.x > -2.0 && a.acceleration.x < 2.0); 
+
+  String gesture = "";
+
+  // GESTURE RECOGNITION
+  if (fT && fI && fM && fR && fP) {
+    gesture = "CLEAR";
+    SerialBT.print("\033[2J"); 
+  }
+  else if (!fT && !fI && fM && fR && !fP && palmForward) {
+    gesture = "I LOVE YOU";
+  }
+  else if (!fT && !fI && fM && fR && fP && a.acceleration.x > 7.0) {
+    gesture = "G";
+  }
+  else if (fI && fM && fR && fP && !fT) {
+    gesture = "A";
+  }
+  else if (!fI && !fM && !fR && !fP && fT) {
+    gesture = "B";
+  }
+
+  // Final Output
+  if (gesture != "") {
+    Serial.println("Detecting: " + gesture);
+    if (gesture != "CLEAR") {
+      SerialBT.println(gesture);
+    }
+  }
+
+  delay(700); 
+} // This is the bracket that fixes your error!
