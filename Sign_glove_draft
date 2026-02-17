@@ -1,0 +1,69 @@
+#include <Wire.h>
+
+// Pins for the 5 flex sensors
+const int flexPins[] = {34, 35, 32, 33, 39}; 
+const char* fingerNames[] = {"Thumb", "Index", "Middle", "Ring ", "Pinky "};
+
+int minValues[5];
+int maxValues[5];
+
+const int MPU_ADDR = 0x68;
+
+void setup() {
+  Serial.begin(115200);
+  Wire.begin(21, 22);
+  
+  // Wake up MPU6050
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x6B);
+  Wire.write(0);
+  Wire.endTransmission(true);
+
+  Serial.println("--- GLOVE CALIBRATION STARTED ---");
+  Serial.println("Slowly OPEN and CLOSE your fist for 10 seconds...");
+
+  // Initialize Min/Max with first readings
+  for (int i = 0; i < 5; i++) {
+    int startVal = analogRead(flexPins[i]);
+    minValues[i] = startVal;
+    maxValues[i] = startVal;
+  }
+
+  unsigned long startTime = millis();
+  while (millis() - startTime < 10000) { // Run for 10 seconds
+    for (int i = 0; i < 5; i++) {
+      int currentVal = analogRead(flexPins[i]);
+      if (currentVal < minValues[i]) minValues[i] = currentVal;
+      if (currentVal > maxValues[i]) maxValues[i] = currentVal;
+    }
+    
+    // Visual feedback
+    if ((millis() % 500) == 0) Serial.print("."); 
+    delay(1);
+  }
+
+  Serial.println("\n\n--- CALIBRATION COMPLETE ---");
+  Serial.println("Copy these values for your ASL code:\n");
+  
+  for (int i = 0; i < 5; i++) {
+    Serial.print(fingerNames[i]);
+    Serial.print(" -> MIN: "); Serial.print(minValues[i]);
+    Serial.print(" | MAX: "); Serial.println(maxValues[i]);
+  }
+}
+
+void loop() {
+  // After calibration, just show current percentage of bend
+  Serial.print("Live Bend %: ");
+  for (int i = 0; i < 5; i++) {
+    int val = analogRead(flexPins[i]);
+    // Maps the reading to 0-100% (0 = straight, 100 = fully bent)
+    int bend = map(val, minValues[i], maxValues[i], 0, 100);
+    bend = constrain(bend, 0, 100);
+    
+    Serial.print(bend);
+    Serial.print("% ");
+  }
+  Serial.println();
+  delay(200);
+}
