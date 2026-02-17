@@ -6,70 +6,57 @@
 BluetoothSerial SerialBT;
 Adafruit_MPU6050 mpu;
 
-// Pins
-const int thumbPin = 33, indexPin = 32, middlePin = 35, ringPin = 34, pinkyPin = 39;
+// GPIO Pins for ESP32
+const int thumbPin  = 33;
+const int indexPin  = 32;
+const int middlePin = 35;
+const int ringPin   = 34;
+const int pinkyPin  = 39; // SN (Sensor_VN)
 
 void setup() {
   Serial.begin(115200);
-  SerialBT.begin("SignLanguageGlove");
+  
+  // Initialize Bluetooth
+  SerialBT.begin("SignLanguageGlove"); 
 
   // Initialize MPU6050
   if (!mpu.begin()) {
-    Serial.println("Failed to find MPU6050 chip");
+    Serial.println("Failed to find MPU6050 chip. Check wiring!");
     while (1) { delay(10); }
   }
   
+  // Fixed library constants
   mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
   mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-  mpu.setFilterBandwidth(MPU6050_FILTER_21_HZ);
+  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ); // Changed from FILTER to BAND
 
-  Serial.println("Glove & MPU6050 Ready!");
+  Serial.println("Glove & MPU6050 Ready! Pair with 'SignLanguageGlove'");
 }
 
 void loop() {
   sensors_event_t a, g, temp;
   mpu.getEvent(&a, &g, &temp);
 
-  // Flex Sensor Readings & Mapping
+  // Read Flex Sensors
+  // Mapping based on your test values (adjust ranges if needed)
   int thumb  = map(analogRead(thumbPin), 400, 3000, 0, 100); 
   int index  = map(analogRead(indexPin), 2000, 3500, 0, 100);
-  int middle = map(middlePin, 2000, 3500, 0, 100);
-  int ring   = map(ringPin, 2200, 3600, 0, 100);
-  int pinky  = map(pinkyPin, 1800, 3200, 0, 100);
+  int middle = map(analogRead(middlePin), 2000, 3500, 0, 100);
+  int ring   = map(analogRead(ringPin), 2200, 3600, 0, 100);
+  int pinky  = map(analogRead(pinkyPin), 1800, 3200, 0, 100);
 
-  bool fT = (thumb > 45), fI = (index > 60), fM = (middle > 65), fR = (ring > 65), fP = (pinky > 55);
+  // Constrain to 0-100
+  thumb = constrain(thumb, 0, 100);
+  index = constrain(index, 0, 100);
+  middle = constrain(middle, 0, 100);
+  ring = constrain(ring, 0, 100);
+  pinky = constrain(pinky, 0, 100);
 
-  // Orientation Logic (a.x is tilt side-to-side, a.y is tilt forward-back)
-  bool palmForward = (a.x > -2.0 && a.x < 2.0); // Hand is vertical
-  bool palmDown    = (a.z > 8.0);               // Hand is flat/horizontal
+  // Threshold logic (True = Finger is Folded)
+  bool fT = (thumb > 45); 
+  bool fI = (index > 60);
+  bool fM = (middle > 65);
+  bool fR = (ring > 65);
+  bool fP = (pinky > 55);
 
-  String gesture = "";
-
-  // GESTURE LOGIC WITH ORIENTATION
-  
-  // 1. I Love You (Only if palm is forward)
-  if (!fT && !fI && fM && fR && !fP && palmForward) {
-    gesture = "I LOVE YOU";
-  }
-  // 2. Letter "G" (Index/Thumb out, but hand must be SIDEWAYS)
-  else if (!fT && !fI && fM && fR && fP && a.x > 7.0) {
-    gesture = "G";
-  }
-  // 3. Clear Screen (Fist held for a moment)
-  else if (fT && fI && fM && fR && fP) {
-    gesture = "CLEAR";
-    SerialBT.print("\033[2J");
-  }
-  // 4. Letter B
-  else if (!fI && !fM && !fR && !fP && fT) {
-    gesture = "B";
-  }
-
-  // Final Output
-  if (gesture != "") {
-    Serial.println(gesture);
-    if (gesture != "CLEAR") SerialBT.println(gesture);
-  }
-
-  delay(600);
-}
+  // MPU6050 Orientation logic
