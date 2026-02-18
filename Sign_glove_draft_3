@@ -1,0 +1,134 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <Wire.h>
+#include <map>
+
+// --- Wi-Fi Credentials ---
+const char* ssid = "IND";
+const char* password = "12345679";
+
+WebServer server(80);
+
+const int flexPins[] = {33, 32, 35, 34, 39}; 
+const char* fingerNames[] = {"Thumb", "Index", "Middle", "Ring", "Pinky"};
+
+int minValues[5] = {1800, 875, 875, 800, 900}; 
+int maxValues[5] = {2900, 1075, 1225, 1015, 1050}; 
+float smoothedBends[5] = {0,0,0,0,0};
+int bends[5]; 
+float roll = 0, pitch = 0;
+const int MPU_ADDR = 0x68;
+const float filterWeight = 0.15; 
+
+// --- Averaging Logic ---
+const int WINDOW_SIZE = 10; 
+String gestureBuffer[WINDOW_SIZE];
+int bufferIndex = 0;
+String currentStableGesture = "Ready...";
+
+String calculateInstantGesture() {
+  bool t_o = bends[0] <= 70; bool t_c = bends[0] > 70;
+  bool i_o = bends[1] <= 80; bool i_c = bends[1] > 80;
+  bool m_o = bends[2] <= 92; bool m_c = bends[2] > 92;
+  bool r_o = bends[3] <= 87; bool r_c = bends[3] > 87;
+  bool p_o = bends[4] <= 77; bool p_c = bends[4] > 77;
+
+  if (t_o && i_c && m_c && r_c && p_c && roll > 60) return "YES";
+  if (t_o && i_c && m_c && r_c && p_c && roll < -40) return "NO";
+  if (i_o && m_o && r_o && p_o && t_o && abs(pitch) > 45) return "HELLO";
+  if (t_o && i_o && p_o && m_c && r_c) return "I LOVE YOU";
+  if (t_o && i_o && m_o && r_o && p_o && abs(pitch) < 30) return "OPEN PALM";
+  if (t_c && i_c && m_c && r_c && p_c) return "FIST";
+  if (i_c && m_c && r_c && p_c && t_o) return "A";
+  if (i_c && m_o && r_o && p_o && t_c) return "";
+  if (i_o && m_o && r_o && p_o && t_c) return "B";
+  if (i_o && t_o && m_c && r_c && p_c) return "L";
+  if (i_o && m_o && t_c && r_c && p_c) return "V";
+  if (t_o && p_o && i_c && m_c && r_c) return "Y";
+  
+  return "...";
+}
+
+void updateStableGesture() {
+  gestureBuffer[bufferIndex] = calculateInstantGesture();
+  bufferIndex = (bufferIndex + 1) % WINDOW_SIZE;
+  std::map<String, int> counts;
+  for (int i = 0; i < WINDOW_SIZE; i++) {
+    if (gestureBuffer[i] != "") counts[gestureBuffer[i]]++;
+  }
+  int maxCount = 0;
+  String winner = "...";
+  for (auto const& [gesture, count] : counts) {
+    if (count > maxCount) {
+      maxCount = count;
+      winner = gesture;
+    }
+  }
+  if (maxCount >= (WINDOW_SIZE * 0.4)) {
+    currentStableGesture = winner;
+  }
+}
+
+void handleData() {
+  String json = "{";
+  for(int i=0; i<5; i++) json += "\"" + String(fingerNames[i]) + "\":" + String(bends[i]) + ",";
+  json += "\"roll\":" + String(roll, 1) + ",";
+  json += "\"pitch\":" + String(pitch, 1) + ",";
+  json += "\"gesture\":\"" + currentStableGesture + "\"}";
+  server.send(200, "application/json", json);
+}
+
+void handleRoot() {
+  String html = "<html><head><title>Smart Glove</title><meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<style>body{font-family:sans-serif; text-align:center; background:#121212; color:white;} .card{background:#1e1e1e; padding:15px; border-radius:10px; display:inline-block; margin:10px; width:85%; max-width:400px; border:1px solid #333;} ";
+  html += "#gesture{font-size:3.5em; color:#ffdd59;} #history-log{text-align:left; background:#000; padding:10px; height:100px; overflow-y:auto; color:#00adb5;} button{padding:12px; margin:5px; background:#00adb5; color:white; border:none; border-radius:5px;} .stat{font-size: 0.9em; color: #888;}</style>";
+  html += "<script>let lastG = ''; let synth = window.speechSynthesis; function speak(t){ if(t !== '...' && t !== lastG && t !== 'Ready...'){ ";
+  html += "let u = new SpeechSynthesisUtterance(t); synth.speak(u); if(t !== 'OPEN PALM' && t !== 'FIST') { document.getElementById('history-log').innerHTML += ' > ' + t + '<br>'; } lastG = t; } } ";
+  html += "setInterval(function(){ fetch('/data').then(r => r.json()).then(d => {";
+  html += "document.getElementById('b0').innerHTML = d.Thumb+'%'; document.getElementById('b1').innerHTML = d.Index+'%'; document.getElementById('b2').innerHTML = d.Middle+'%'; document.getElementById('b3').innerHTML = d.Ring+'%'; document.getElementById('b4').innerHTML = d.Pinky+'%'; ";
+  html += "document.getElementById('gesture').innerHTML = d.gesture; speak(d.gesture);";
+  html += "}).catch(e => console.error('JSON Error:', e));}, 200); </script></head><body><h1>ASL Glove</h1><div class='card'><h2 id='gesture'>--</h2></div>";
+  html += "<div class='card'><h2>History</h2><div id='history-log'></div><br><button onclick=\"document.getElementById('history-log').innerHTML=''\">CLEAR</button></div>";
+  html += "<div class='card'><button onclick=\"fetch('/set_min')\">SET FLAT</button><button onclick=\"fetch('/set_max')\">SET FIST</button></div>";
+  html += "<div class='card'><h3>Finger Data</h3><p class='stat'>T: <span id='b0'></span> | I: <span id='b1'></span> | M: <span id='b2'></span> | R: <span id='b3'></span> | P: <span id='b4'></span></p></div></body></html>";
+  server.send(200, "text/html", html);
+}
+
+void setup() {
+  Serial.begin(115200); // Kept only for initial connection IP
+  analogReadResolution(12);
+  Wire.begin(21, 22);
+  Wire.beginTransmission(MPU_ADDR); Wire.write(0x6B); Wire.write(0); Wire.endTransmission(true);
+  
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+  Serial.println("\nIP: " + WiFi.localIP().toString()); // Navigate to this IP in browser
+
+  server.on("/", handleRoot);
+  server.on("/data", handleData);
+  server.on("/set_min", [](){ for(int i=0; i<5; i++) minValues[i] = analogRead(flexPins[i]); server.send(200); });
+  server.on("/set_max", [](){ for(int i=0; i<5; i++) maxValues[i] = (analogRead(flexPins[i]) * 0.95); server.send(200); });
+  server.begin();
+}
+
+unsigned long lastUpdate = 0;
+void loop() {
+  server.handleClient();
+  
+  for (int i = 0; i < 5; i++) {
+    float raw = analogRead(flexPins[i]);
+    smoothedBends[i] = (raw * filterWeight) + (smoothedBends[i] * (1.0 - filterWeight));
+    bends[i] = constrain(map((int)smoothedBends[i], minValues[i], maxValues[i], 0, 100), 0, 100);
+  }
+
+  Wire.beginTransmission(MPU_ADDR); Wire.write(0x3B); Wire.endTransmission(false); Wire.requestFrom(MPU_ADDR, 6, true);
+  if (Wire.available() >= 6) {
+    int16_t ax = Wire.read()<<8|Wire.read(); int16_t ay = Wire.read()<<8|Wire.read(); int16_t az = Wire.read()<<8|Wire.read();
+    roll = atan2(ay, az) * 180 / PI; pitch = atan2(-ax, sqrt((long)ay * ay + (long)az * az)) * 180 / PI;
+  }
+
+  if (millis() - lastUpdate > 100) { 
+    updateStableGesture(); 
+    lastUpdate = millis(); 
+  }
+}
